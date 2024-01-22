@@ -3,6 +3,8 @@ import datetime
 from telethon.sync import TelegramClient
 from telethon.tl.functions.contacts import ResolveUsernameRequest
 
+from api_config import config_register as cfg
+
 # We have to manually call "start" if we want an explicit bot token
 client = TelegramClient('test_client', api_id, api_hash)
 
