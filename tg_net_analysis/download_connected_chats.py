@@ -3,7 +3,7 @@ import csv
 import logging
 import time
 from datetime import datetime
-from typing import Dict, List
+from typing import List, Mapping, Union
 
 from dotenv import load_dotenv
 from telethon.sync import TelegramClient
@@ -16,7 +16,7 @@ DATA_DIR = os.path.join(ROOT_DIR, "data")
 load_dotenv()
 
 with open(os.path.join(FILE_DIR, "seeds.txt"), "r") as f:
-    seeds = f.readlines()
+    seeds = [line.rstrip() for line in f]
 api_id = os.environ.get("API_ID")
 api_hash = os.environ.get("API_HASH")
 client = TelegramClient('test_client', api_id, api_hash)
@@ -31,27 +31,30 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-async def collect_forwards_original_chats(seed) -> List[Dict]:
+async def collect_forwards_original_chats(client, seed: str) -> List[Mapping[str, Union[int, str]]]:
     """ Collect the chat usernames of the groups
         from which the forward messaged were originally created.
     """
     logger.debug("Collecting chats from: %s", seed)
     original_chats = []
-    async for message in client.iter_messages(seed, limit=50):
+    async for message in client.iter_messages(seed, limit=20):
         time.sleep(0.1)
-        if message.forward is not None:
+        if message.forward is not None and message.forward.chat is not None:
             # collect and record username, title and size
+            print(message.forward)
             original_chat = message.forward.chat
+            print(original_chat)
             original_chat_username = original_chat.username
             original_chat_title = original_chat.title
             participants = await client.get_participants(original_chat_username, limit=0)
             participants = participants.total
 
             chat_info = {
-                "username": original_chat_username,
+                "id": original_chat_username,
                 "label": original_chat_title,
                 "size": participants,
-                "seeding_chat": seed
+                "seeding_chat": seed,
+                "seed_connection_type": "forward"
             }
 
             original_chats.append(chat_info)
@@ -64,18 +67,24 @@ async def make_record_dir():
         os.makedirs(record_dir)
     return record_dir
 
-async def create_csv_file(filepath, columns):
+async def create_csv_file(
+        filepath: str,
+        columns: List[str]
+    ):
     if not os.path.exists(filepath):
         with open(filepath, "w") as csvfile:
             csvwriter = csv.writer(csvfile, delimiter="\t")
             csvwriter.writerow(columns)
 
-async def record_chats(record_dir, original_chats):
+async def record_chats(
+        record_dir: str,
+        original_chats: List[Mapping[str, Union[int, str]]]
+    ):
     node_file = os.path.join(record_dir, "node.csv")
-    create_csv_file(node_file, ["id", "label", "size"])
+    await create_csv_file(node_file, ["id", "label", "size"])
     
     edge_file = os.path.join(record_dir, "edge.csv")
-    create_csv_file(edge_file, ["source", "target", "type"])
+    await create_csv_file(edge_file, ["source", "target", "seed_connection_type"])
     
     # record id, label, size of collected chats
     with open(node_file, "a") as csvfile:
@@ -87,9 +96,9 @@ async def record_chats(record_dir, original_chats):
     with open(edge_file, "a") as csvfile:
         csvwriter = csv.writer(csvfile, delimiter="\t")
         for chat in original_chats:
-            csvwriter.writerow([chat["seeding_chat"], chat["username"], chat["forward"]])
+            csvwriter.writerow([chat["seeding_chat"], chat["id"], chat["seed_connection_type"]])
     
-async def set_run_logs(record_dir):
+async def set_run_logs(record_dir:str):
     logs_file = os.path.join(record_dir, "file.log")
     file_handler = logging.FileHandler(logs_file, mode="w")
     file_handler.setLevel(logging.DEBUG)
@@ -106,12 +115,12 @@ async def main():
         original_chats = []
 
         for seed in new_seeds:
-            collected_chats = await collect_forwards_original_chats(seed)
-            original_chats.append(collected_chats)
+            collected_chats = await collect_forwards_original_chats(client, seed)
+            original_chats.extend(collected_chats)
 
-        original_chats = list(set(original_chats))
+        # original_chats = list(set(original_chats))
         await record_chats(record_dir, original_chats)
-        new_seeds = [chat.username for chat in original_chats]
+        new_seeds = [chat["id"] for chat in original_chats]
 
     logger.handlers = [h for h in logger.handlers if not isinstance(h, logging.StreamHandler)]
 
