@@ -37,6 +37,13 @@ async def find_tg_channel_link(text: str):
         return tg_links
     return None
 
+async def _get_participants_number(client, chat_username: str):
+    if chat_username is not None and chat_username != "None":
+        participants = await client.get_participants(chat_username, limit=0)
+        participants = participants.total
+        return participants
+    return None
+
 async def collect_forwards_original_chats(client, seed: str) -> List[Mapping[str, Union[int, str]]]:
     """ Collect the chat usernames of the groups
         from which the forward messaged were originally created.
@@ -50,8 +57,8 @@ async def collect_forwards_original_chats(client, seed: str) -> List[Mapping[str
             original_chat = message.forward.chat
             original_chat_username = original_chat.username
             original_chat_title = original_chat.title
-            participants = await client.get_participants(original_chat_username, limit=0)
-            participants = participants.total
+            print("ENTITY:", original_chat_username, "TITLE:", original_chat_title)
+            participants = await _get_participants_number(client, original_chat_username)
 
             chat_info = {
                 "id": original_chat_username,
@@ -61,6 +68,7 @@ async def collect_forwards_original_chats(client, seed: str) -> List[Mapping[str
                 "seed_connection_type": "forward"
             }
             original_chats.append(chat_info)
+            continue
         
         tg_links = await find_tg_channel_link(message.message)
         if tg_links is not None:
@@ -68,8 +76,8 @@ async def collect_forwards_original_chats(client, seed: str) -> List[Mapping[str
                 original_chat_username = match
                 entity = await client.get_entity(original_chat_username)
                 original_chat_title = entity.title
-                participants = await client.get_participants(original_chat_username, limit=0)
-                participants = participants.total
+                print("ENTITY:", original_chat_username, "TITLE:", original_chat_title)
+                participants = await _get_participants_number(client, original_chat_username)
 
                 chat_info = {
                     "id": original_chat_username,
@@ -79,6 +87,7 @@ async def collect_forwards_original_chats(client, seed: str) -> List[Mapping[str
                     "seed_connection_type": "mention"
                 }
                 original_chats.append(chat_info)
+            continue
 
     return original_chats
 
