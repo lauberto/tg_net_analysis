@@ -1,7 +1,9 @@
 import os
+import re
 import csv
 import logging
 import time
+from argparse import ArgumentParser
 from datetime import datetime
 from typing import List, Mapping, Union
 
@@ -15,8 +17,6 @@ DATA_DIR = os.path.join(ROOT_DIR, "data")
 
 load_dotenv()
 
-with open(os.path.join(FILE_DIR, "seeds.txt"), "r") as f:
-    seeds = [line.rstrip() for line in f]
 api_id = os.environ.get("API_ID")
 api_hash = os.environ.get("API_HASH")
 client = TelegramClient('test_client', api_id, api_hash)
@@ -31,6 +31,12 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+async def find_tg_channel_link(text: str):
+    if text is not None and text != "None":
+        tg_links = re.findall(r"https:\/\/t\.me\/(\w+)", text)
+        return tg_links
+    return None
+
 async def collect_forwards_original_chats(client, seed: str) -> List[Mapping[str, Union[int, str]]]:
     """ Collect the chat usernames of the groups
         from which the forward messaged were originally created.
@@ -41,9 +47,7 @@ async def collect_forwards_original_chats(client, seed: str) -> List[Mapping[str
         time.sleep(0.1)
         if message.forward is not None and message.forward.chat is not None:
             # collect and record username, title and size
-            print(message.forward)
             original_chat = message.forward.chat
-            print(original_chat)
             original_chat_username = original_chat.username
             original_chat_title = original_chat.title
             participants = await client.get_participants(original_chat_username, limit=0)
@@ -56,8 +60,25 @@ async def collect_forwards_original_chats(client, seed: str) -> List[Mapping[str
                 "seeding_chat": seed,
                 "seed_connection_type": "forward"
             }
-
             original_chats.append(chat_info)
+        
+        tg_links = await find_tg_channel_link(message.message)
+        if tg_links is not None:
+            for match in tg_links:
+                original_chat_username = match
+                entity = await client.get_entity(original_chat_username)
+                original_chat_title = entity.title
+                participants = await client.get_participants(original_chat_username, limit=0)
+                participants = participants.total
+
+                chat_info = {
+                    "id": original_chat_username,
+                    "label": original_chat_title,
+                    "size": participants,
+                    "seeding_chat": seed,
+                    "seed_connection_type": "mention"
+                }
+                original_chats.append(chat_info)
 
     return original_chats
 
@@ -104,13 +125,38 @@ async def set_run_logs(record_dir:str):
     file_handler.setLevel(logging.DEBUG)
     logger.addHandler(file_handler)
 
+def _parse_args():
+    parser = ArgumentParser()
+    parser.add_argument(
+        "-i",
+        "--iterations",
+        default=2,
+        help="How many times should the scraping be iterated.",
+        type=int
+    )
+    parser.add_argument(
+        "-sf",
+        "--seeds_file",
+        default=os.path.join(FILE_DIR, "seeds.txt"),
+        help="Which TG channel usernames to use as seeds.",
+        type=str
+    )
+    args = parser.parse_args()
+    return args
+
+def _read_seeds_file(filepath):
+    with open(filepath, "r") as f:
+        seeds = [line.rstrip() for line in f]
+    return seeds
+
 async def main():
-    iterations = 2
-    new_seeds = seeds
+    args = _parse_args()
+    iterations = args.iterations
+    new_seeds = _read_seeds_file(args.seeds_file)
     record_dir = await make_record_dir()
     await set_run_logs(record_dir)
 
-    while iterations > 0:
+    while iterations > 0 and new_seeds:
         iterations -= 1
         original_chats = []
 
