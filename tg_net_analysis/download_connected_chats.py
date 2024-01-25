@@ -44,20 +44,21 @@ async def _get_participants_number(client, chat_username: str):
         return participants
     return None
 
-async def collect_forwards_original_chats(client, seed: str) -> List[Mapping[str, Union[int, str]]]:
+async def collect_forwards_original_chats(client, seed: str, offset_date: datetime) -> List[Mapping[str, Union[int, str]]]:
     """ Collect the chat usernames of the groups
         from which the forward messaged were originally created.
     """
     logger.debug("Collecting chats from: %s", seed)
     original_chats = []
-    async for message in client.iter_messages(seed, limit=20):
-        time.sleep(0.1)
+    # async for message in client.iter_messages(seed, limit=20):
+    async for message in client.iter_messages(seed, offset_date=offset_date, reverse=True, wait_time=10):
+        time.sleep(10)
         if message.forward is not None and message.forward.chat is not None:
+            print(message.id, message.date, message.text)
             # collect and record username, title and size
             original_chat = message.forward.chat
             original_chat_username = original_chat.username
             original_chat_title = original_chat.title
-            print("ENTITY:", original_chat_username, "TITLE:", original_chat_title)
             participants = await _get_participants_number(client, original_chat_username)
 
             chat_info = {
@@ -65,7 +66,8 @@ async def collect_forwards_original_chats(client, seed: str) -> List[Mapping[str
                 "label": original_chat_title,
                 "size": participants,
                 "seeding_chat": seed,
-                "seed_connection_type": "forward"
+                "connection_type": "forward",
+                "connection_date": message.date
             }
             original_chats.append(chat_info)
             continue
@@ -84,7 +86,8 @@ async def collect_forwards_original_chats(client, seed: str) -> List[Mapping[str
                     "label": original_chat_title,
                     "size": participants,
                     "seeding_chat": seed,
-                    "seed_connection_type": "mention"
+                    "connection_type": "mention",
+                    "connection_date": message.date
                 }
                 original_chats.append(chat_info)
             continue
@@ -114,7 +117,7 @@ async def record_chats(
     await create_csv_file(node_file, ["id", "label", "size"])
     
     edge_file = os.path.join(record_dir, "edge.csv")
-    await create_csv_file(edge_file, ["source", "target", "seed_connection_type"])
+    await create_csv_file(edge_file, ["source", "target", "connection_type", "connection_date"])
     
     # record id, label, size of collected chats
     with open(node_file, "a") as csvfile:
@@ -126,7 +129,7 @@ async def record_chats(
     with open(edge_file, "a") as csvfile:
         csvwriter = csv.writer(csvfile, delimiter="\t")
         for chat in original_chats:
-            csvwriter.writerow([chat["seeding_chat"], chat["id"], chat["seed_connection_type"]])
+            csvwriter.writerow([chat["seeding_chat"], chat["id"], chat["connection_type"], chat["connection_date"]])
     
 async def set_run_logs(record_dir:str):
     logs_file = os.path.join(record_dir, "file.log")
@@ -150,6 +153,13 @@ def _parse_args():
         help="Which TG channel usernames to use as seeds.",
         type=str
     )
+    parser.add_argument(
+        "-od",
+        "--offset_date",
+        required=True,
+        type=datetime.fromisoformat,
+        help="Date is ISO format (year, month, day), e.g. 2022-02-14"
+    )
     args = parser.parse_args()
     return args
 
@@ -170,7 +180,7 @@ async def main():
         original_chats = []
 
         for seed in new_seeds:
-            collected_chats = await collect_forwards_original_chats(client, seed)
+            collected_chats = await collect_forwards_original_chats(client, seed, args.offset_date)
             original_chats.extend(collected_chats)
 
         # original_chats = list(set(original_chats))

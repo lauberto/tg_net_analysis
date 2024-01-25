@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 
 import pytest
 
@@ -33,14 +34,16 @@ async def test_record_chats():
             "label": "test_label1",
             "size": "test_size1",
             "seeding_chat": "test_seeding_chat1",
-            "seed_connection_type": "type1"
+            "connection_type": "type1",
+            "connection_date": datetime.fromisoformat("2022-12-01")
         },
         {
             "id": "test_username2",
             "label": "test_label2",
             "size": "test_size2",
             "seeding_chat": "test_seeding_chat2",
-            "seed_connection_type": "type2"
+            "connection_type": "type2",
+            "connection_date": datetime.fromisoformat("2022-12-02")
 
         }
     ]
