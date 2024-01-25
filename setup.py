@@ -5,7 +5,7 @@ setup(
     version="1.0.0",
     author="Andrea Grillandi",
     packages=find_packages(),
-    python_requires=">=3.10.0",
+    python_requires=">=3.9.0",
     install_requires=[
         "pytest>=7.4.4",
         "pytest-asyncio>=0.23.3",
