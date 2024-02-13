@@ -9,7 +9,8 @@ from typing import List, Mapping, Union
 
 from dotenv import load_dotenv
 from telethon.sync import TelegramClient
-from telethon.tl.functions.contacts import ResolveUsernameRequest
+from telethon.tl import types
+from telethon.errors.rpcerrorlist import UsernameInvalidError, ChannelPrivateError
 
 FILE_DIR = os.path.dirname(os.path.realpath(__file__))
 ROOT_DIR = os.path.dirname(FILE_DIR)
@@ -44,53 +45,97 @@ async def _get_participants_number(client, chat_username: str):
         return participants
     return None
 
-async def collect_forwards_original_chats(client, seed: str, offset_date: datetime) -> List[Mapping[str, Union[int, str]]]:
+async def _clean_chat_id(id_: int):
+    str_id = str(id_)
+    if str_id.startswith("-100"):
+        str_id = str_id[4:]
+    return int(str_id)
+
+async def get_chat_info(client, seed, message):
+    """
+    Check if message was forward and, in that case,
+    collect info about the source chat.
+    """
+
+    # Forwards
+    if message.forward is not None and message.forward.chat is not None:
+        print(message.id, message.date, message.text)
+        # collect and record username, title and size
+        original_chat = message.forward.chat
+        if type(original_chat) not in (types.Chat, types.Channel):
+            return None
+        # original_chat_username = original_chat.username
+        original_chat_id = original_chat.id
+        original_chat_title = original_chat.title
+        participants = await _get_participants_number(client, original_chat_id)
+
+        original_chat_id = await _clean_chat_id(original_chat_id)
+        seed = await _clean_chat_id(seed)
+        chat_info = {
+            "id": original_chat_id,
+            "label": original_chat_title,
+            "size": participants,
+            "seeding_chat": seed,
+            "connection_type": "forward",
+            "connection_date": message.date
+        }
+        return chat_info
+    
+    # Mentions
+    tg_links = await find_tg_channel_link(message.message)
+    if tg_links is not None:
+        for match in tg_links:
+            original_chat_username = match
+
+            try:
+                entity = await client.get_entity(original_chat_username)
+            except (UsernameInvalidError, ValueError):
+                return None
+
+            if type(entity) not in (types.Chat, types.Channel):
+                return None 
+            original_chat_id = entity.id
+            original_chat_title = entity.title
+            participants = await _get_participants_number(client, original_chat_id)
+
+            original_chat_id = await _clean_chat_id(original_chat_id)
+            seed = await _clean_chat_id(seed)
+            chat_info = {
+                "id": original_chat_id,
+                "label": original_chat_title,
+                "size": participants,
+                "seeding_chat": seed,
+                "connection_type": "mention",
+                "connection_date": message.date
+            }
+            return chat_info
+    
+    return None
+
+
+async def collect_forwards_original_chats(
+        client,
+        seed: str,
+        offset_date: datetime,
+        limit: float,
+        reverse: bool = False,
+    ) -> List[Mapping[str, Union[int, str]]]:
     """ Collect the chat usernames of the groups
         from which the forward messaged were originally created.
     """
     logger.debug("Collecting chats from: %s", seed)
     original_chats = []
-    # async for message in client.iter_messages(seed, limit=20):
-    async for message in client.iter_messages(seed, offset_date=offset_date, reverse=True, wait_time=10):
-        time.sleep(10)
-        if message.forward is not None and message.forward.chat is not None:
-            print(message.id, message.date, message.text)
-            # collect and record username, title and size
-            original_chat = message.forward.chat
-            original_chat_username = original_chat.username
-            original_chat_title = original_chat.title
-            participants = await _get_participants_number(client, original_chat_username)
 
-            chat_info = {
-                "id": original_chat_username,
-                "label": original_chat_title,
-                "size": participants,
-                "seeding_chat": seed,
-                "connection_type": "forward",
-                "connection_date": message.date
-            }
-            original_chats.append(chat_info)
-            continue
-        
-        tg_links = await find_tg_channel_link(message.message)
-        if tg_links is not None:
-            for match in tg_links:
-                original_chat_username = match
-                entity = await client.get_entity(original_chat_username)
-                original_chat_title = entity.title
-                print("ENTITY:", original_chat_username, "TITLE:", original_chat_title)
-                participants = await _get_participants_number(client, original_chat_username)
+    if offset_date is not None:
+        reverse = True
+        limit = None
 
-                chat_info = {
-                    "id": original_chat_username,
-                    "label": original_chat_title,
-                    "size": participants,
-                    "seeding_chat": seed,
-                    "connection_type": "mention",
-                    "connection_date": message.date
-                }
-                original_chats.append(chat_info)
-            continue
+    async for message in client.iter_messages(seed, offset_date=offset_date, limit=limit, reverse=reverse, wait_time=2):
+        time.sleep(1)
+        chat_info = await get_chat_info(client, seed, message)
+        original_chats.append(chat_info)
+
+    original_chats = [chat for chat in original_chats if chat is not None]    
 
     return original_chats
 
@@ -149,29 +194,47 @@ def _parse_args():
     parser.add_argument(
         "-sf",
         "--seeds_file",
-        default=os.path.join(FILE_DIR, "seeds.txt"),
+        default=os.path.join(FILE_DIR, "seeds.tsv"),
         help="Which TG channel usernames to use as seeds.",
         type=str
     )
     parser.add_argument(
         "-od",
         "--offset_date",
-        required=True,
+        # required=True,
+        default=None,
         type=datetime.fromisoformat,
         help="Date is ISO format (year, month, day), e.g. 2022-02-14"
+    )
+    parser.add_argument(
+        "-ml",
+        "--message_limit",
+        default=200,
+        help="How many messages per chat should be collected starting from now and going backward in time?",
+        type=int
     )
     args = parser.parse_args()
     return args
 
 def _read_seeds_file(filepath):
-    with open(filepath, "r") as f:
-        seeds = [line.rstrip() for line in f]
-    return seeds
+    new_seeds = []
+    # chat_title2id = {}
+    with open(filepath) as csvfile:
+        reader = csv.DictReader(csvfile, delimiter="\t")
+        for row in reader:
+            new_seeds.append(int((row["id"])))
+    return new_seeds
+
+# def _read_seeds_file(filepath):
+#     with open(filepath, "r") as f:
+#         seeds = [line.rstrip() for line in f]
+#     return seeds
 
 async def main():
     args = _parse_args()
     iterations = args.iterations
     new_seeds = _read_seeds_file(args.seeds_file)
+    logger.debug("Seeds are: %s", ", ".join([str(seed) for seed in new_seeds]))
     record_dir = await make_record_dir()
     await set_run_logs(record_dir)
 
@@ -180,7 +243,7 @@ async def main():
         original_chats = []
 
         for seed in new_seeds:
-            collected_chats = await collect_forwards_original_chats(client, seed, args.offset_date)
+            collected_chats = await collect_forwards_original_chats(client, seed, args.offset_date, args.message_limit)
             original_chats.extend(collected_chats)
 
         # original_chats = list(set(original_chats))
@@ -189,6 +252,11 @@ async def main():
 
     logger.handlers = [h for h in logger.handlers if not isinstance(h, logging.StreamHandler)]
 
+async def test():
+    async for message in client.iter_messages(-1001318845663, limit=5, wait_time=1):
+        print(message)
+
 if __name__ == "__main__":
     with client:
         client.loop.run_until_complete(main())
+        # client.loop.run_until_complete(test())

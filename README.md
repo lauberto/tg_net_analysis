@@ -9,7 +9,7 @@ Use an .env file to store your API secrets, making sure that the .env file is no
 
 ```pip install python-dotenv```
 
-Create a .env file looking something like:
+Create a .env file that looks something like:
 ```
 API_ID=1234
 API_HASH=abc123
