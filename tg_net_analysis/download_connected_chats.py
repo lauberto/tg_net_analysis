@@ -67,8 +67,13 @@ async def get_chat_info(client, seed, message):
         # original_chat_username = original_chat.username
         original_chat_id = original_chat.id
         original_chat_title = original_chat.title
-        participants = await _get_participants_number(client, original_chat_id)
 
+        # FIXME: this should not stay as a try/except block
+        try: 
+            participants = await _get_participants_number(client, original_chat_id)
+        except ChannelPrivateError:
+            return None
+    
         original_chat_id = await _clean_chat_id(original_chat_id)
         seed = await _clean_chat_id(seed)
         chat_info = {
@@ -96,7 +101,12 @@ async def get_chat_info(client, seed, message):
                 return None 
             original_chat_id = entity.id
             original_chat_title = entity.title
-            participants = await _get_participants_number(client, original_chat_id)
+
+            # FIXME: this should not stay as a try/except block
+            try: 
+                participants = await _get_participants_number(client, original_chat_id)
+            except ChannelPrivateError:
+                return None
 
             original_chat_id = await _clean_chat_id(original_chat_id)
             seed = await _clean_chat_id(seed)
@@ -130,17 +140,21 @@ async def collect_forwards_original_chats(
         reverse = True
         limit = None
 
-    async for message in client.iter_messages(seed, offset_date=offset_date, limit=limit, reverse=reverse, wait_time=2):
-        time.sleep(1)
-        chat_info = await get_chat_info(client, seed, message)
-        original_chats.append(chat_info)
+    # FIXME: this try/except is made to temporarily work around the ChannelPrivateError
+    try:
+        async for message in client.iter_messages(seed, offset_date=offset_date, limit=limit, reverse=reverse, wait_time=2):
+            time.sleep(1)
+            chat_info = await get_chat_info(client, seed, message)
+            original_chats.append(chat_info)
+    except ChannelPrivateError:
+        return []
 
     original_chats = [chat for chat in original_chats if chat is not None]    
 
     return original_chats
 
 async def make_record_dir():
-    record_dir = os.path.join(DATA_DIR, "run_" + datetime.now().strftime("%d-%m-%Y_%H:%M:%S"))
+    record_dir = os.path.join(DATA_DIR, "run_" + datetime.now().strftime("%Y-%m-%d_%H:%M:%S"))
     if not os.path.exists(record_dir):
         os.makedirs(record_dir)
     return record_dir
