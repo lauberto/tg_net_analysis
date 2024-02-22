@@ -2,6 +2,7 @@ import os
 import re
 import csv
 import logging
+import random
 import time
 from argparse import ArgumentParser
 from datetime import datetime
@@ -72,7 +73,8 @@ async def get_chat_info(client, seed, message):
         try: 
             participants = await _get_participants_number(client, original_chat_id)
         except ChannelPrivateError:
-            return None
+            logger.debug("FORWARD: Tried to get messages from %s but chat is private: Setting participants to None.", original_chat_title)
+            participants = None
     
         original_chat_id = await _clean_chat_id(original_chat_id)
         seed = await _clean_chat_id(seed)
@@ -106,7 +108,8 @@ async def get_chat_info(client, seed, message):
             try: 
                 participants = await _get_participants_number(client, original_chat_id)
             except ChannelPrivateError:
-                return None
+                logger.debug("MENTION: Tried to get messages from %s but chat is private: Setting participants to None.", original_chat_title)
+                participants = None
 
             original_chat_id = await _clean_chat_id(original_chat_id)
             seed = await _clean_chat_id(seed)
@@ -143,18 +146,19 @@ async def collect_forwards_original_chats(
     # FIXME: this try/except is made to temporarily work around the ChannelPrivateError
     try:
         async for message in client.iter_messages(seed, offset_date=offset_date, limit=limit, reverse=reverse, wait_time=2):
-            time.sleep(1)
+            time.sleep(2*random.random())
             chat_info = await get_chat_info(client, seed, message)
             original_chats.append(chat_info)
     except ChannelPrivateError:
+        logger.debug("Could not collect messages from %s because channel is private and you probably don't have access.", seed)
         return []
 
-    original_chats = [chat for chat in original_chats if chat is not None]    
+    original_chats = [chat for chat in original_chats if chat is not None and chat["size"] is not None]    
 
     return original_chats
 
 async def make_record_dir():
-    record_dir = os.path.join(DATA_DIR, "run_" + datetime.now().strftime("%Y-%m-%d_%H:%M:%S"))
+    record_dir = os.path.join(DATA_DIR, "run_" + datetime.now().strftime("%Y-%m-%d_%H%M%S"))
     if not os.path.exists(record_dir):
         os.makedirs(record_dir)
     return record_dir
@@ -223,7 +227,7 @@ def _parse_args():
     parser.add_argument(
         "-ml",
         "--message_limit",
-        default=200,
+        default=100,
         help="How many messages per chat should be collected starting from now and going backward in time?",
         type=int
     )
